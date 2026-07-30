@@ -57,7 +57,7 @@ def platform_manifest_digest(manifest: object) -> str:
     require(len(matches) == 1 and re.fullmatch(r"sha256:[0-9a-f]{64}", str(matches[0])) is not None, "manifest lacks one Linux amd64 image")
     platform_digest = str(matches[0])
     attestations = [descriptor for descriptor in manifest.get("manifests", []) if descriptor.get("annotations", {}).get("vnd.docker.reference.digest") == platform_digest and descriptor.get("annotations", {}).get("vnd.docker.reference.type") == "attestation-manifest"]
-    require(len(attestations) >= 2, "manifest lacks provenance and SBOM attestations for Linux amd64 image")
+    require(len(attestations) == 1, "manifest lacks one attestation manifest for Linux amd64 image")
     return platform_digest
 
 

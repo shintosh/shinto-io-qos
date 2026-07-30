@@ -26,15 +26,15 @@ class PublishedImageVerifierTest(unittest.TestCase):
             "mediaType": "application/vnd.oci.image.manifest.v1+json",
             "digest": self.platform_digest,
             "platform": {"os": "linux", "architecture": "amd64"},
-        }, *[{
+        }, {
             "mediaType": "application/vnd.oci.image.manifest.v1+json",
-            "digest": "sha256:" + digit * 64,
+            "digest": "sha256:" + "6" * 64,
             "platform": {"os": "unknown", "architecture": "unknown"},
             "annotations": {
                 "vnd.docker.reference.digest": self.platform_digest,
                 "vnd.docker.reference.type": "attestation-manifest",
             },
-        } for digit in ("6", "7")]]}
+        }]}
         (self.root / "manifest.json").write_text(json.dumps(manifest, separators=(",", ":")))
         self.digest = "sha256:" + hashlib.sha256((self.root / "manifest.json").read_bytes()).hexdigest()
         contract_hash = hashlib.sha256(contract).hexdigest()
@@ -119,7 +119,7 @@ class PublishedImageVerifierTest(unittest.TestCase):
         (self.root / "manifest.json").write_text(json.dumps(manifest, separators=(",", ":")))
         self.digest = "sha256:" + hashlib.sha256((self.root / "manifest.json").read_bytes()).hexdigest()
         result = self.run_verifier()
-        self.assertIn("manifest lacks provenance and SBOM attestations", result.stderr)
+        self.assertIn("manifest lacks one attestation manifest", result.stderr)
 
     def test_rejects_nested_provenance_identity_decoy(self) -> None:
         self.provenance["SLSA"]["invocation"]["configSource"]["uri"] = "https://example.invalid/repo"

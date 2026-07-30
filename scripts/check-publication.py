@@ -181,8 +181,8 @@ def check_workflow(root: Path) -> None:
     allowed_public_images = {PINNED_BUILDER, PINNED_BUILDKIT, PINNED_SBOM}
     referenced_images = set(re.findall(r"docker\.io/[A-Za-z0-9_./:@-]+", workflow))
     require(referenced_images == allowed_public_images, "workflow public image allowlist differs")
-    registry_references = set(re.findall(r"[a-z0-9.-]+\.[a-z]{2,}(?::[0-9]+)?/[A-Za-z0-9_./:@${}-]+", workflow))
-    allowed_registry_references = allowed_public_images | {
+    registry_references = set(re.findall(r"(?:localhost|(?:[0-9]{1,3}\.){3}[0-9]{1,3}|[a-z0-9.-]+(?::[0-9]+)?)/[A-Za-z0-9_./{}$-]+(?:[:@][^\s'\"]+)", workflow))
+    allowed_registry_references = allowed_public_images | {PINNED_CHECKOUT,
         "ghcr.io/shintosh/shinto-io-qos:${GITHUB_SHA}",
         "ghcr.io/shintosh/shinto-io-qos@${digest}",
     }
