@@ -21,13 +21,20 @@ class PublishedImageVerifierTest(unittest.TestCase):
         contract = (ROOT / "contract/runtime.json").read_bytes()
         (self.root / "contract.json").write_bytes(contract)
         (self.root / "embedded.json").write_bytes(contract)
-        (self.root / "manifest.json").write_bytes(b'{"schemaVersion":2,"fixture":"index"}\n')
+        self.platform_digest = "sha256:" + "4" * 64
+        manifest = {"schemaVersion": 2, "manifests": [{
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "digest": self.platform_digest,
+            "platform": {"os": "linux", "architecture": "amd64"},
+        }]}
+        (self.root / "manifest.json").write_text(json.dumps(manifest, separators=(",", ":")))
         self.digest = "sha256:" + hashlib.sha256((self.root / "manifest.json").read_bytes()).hexdigest()
         contract_hash = hashlib.sha256(contract).hexdigest()
         self.provenance = {
             "predicateType": "https://slsa.dev/provenance/v1",
             "source": "https://github.com/shintosh/shinto-io-qos",
             "revision": REVISION,
+            "subject": [{"name": "image", "digest": {"sha256": self.platform_digest.removeprefix("sha256:")}}],
             "materials": [
                 "sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651",
                 "sha256:79e7b013cbec16bbb436f312819a49a4a57752b2270c1a9332ae1a10fcc82a68",
@@ -39,6 +46,7 @@ class PublishedImageVerifierTest(unittest.TestCase):
             "name": "shinto-io-qos",
             "documentNamespace": "https://github.com/shintosh/shinto-io-qos/sbom/fixture",
             "packages": [{"name": "shinto-io-governor", "versionInfo": REVISION}],
+            "subject": [{"name": "image", "digest": {"sha256": self.platform_digest.removeprefix("sha256:")}}],
         }
         self.image = {
             "os": "linux", "architecture": "amd64",
@@ -94,6 +102,23 @@ class PublishedImageVerifierTest(unittest.TestCase):
         self.digest = "sha256:" + "2" * 64
         result = self.run_verifier()
         self.assertIn("manifest bytes do not match requested digest", result.stderr)
+
+    def test_rejects_unrelated_attestation_subject(self) -> None:
+        self.provenance["subject"][0]["digest"]["sha256"] = "5" * 64
+        result = self.run_verifier()
+        self.assertIn("provenance subject differs", result.stderr)
+
+    def test_rejects_nested_provenance_identity_decoy(self) -> None:
+        self.provenance["source"] = "https://example.invalid/repo"
+        self.provenance["decoy"] = "https://github.com/shintosh/shinto-io-qos"
+        result = self.run_verifier()
+        self.assertIn("provenance source differs", result.stderr)
+
+    def test_rejects_nested_image_label_decoy(self) -> None:
+        self.image["config"]["Labels"]["org.opencontainers.image.source"] = "https://example.invalid/repo"
+        self.image["decoy"] = "https://github.com/shintosh/shinto-io-qos"
+        result = self.run_verifier()
+        self.assertIn("OCI source label differs", result.stderr)
 
 
 if __name__ == "__main__":

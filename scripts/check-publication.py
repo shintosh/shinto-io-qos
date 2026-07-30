@@ -82,7 +82,7 @@ def check_go(root: Path) -> None:
 
 def check_contract(root: Path) -> None:
     raw = read(root, "contract/runtime.json")
-    require(raw.endswith("\n") and not raw.endswith("\n\n"), "runtime contract must end with one newline")
+    require(raw.endswith("\n") and not raw.endswith("\n\n") and len(raw) > 1 and not raw[-2].isspace(), "runtime contract must end with one newline")
     contract = json.loads(raw)
     expected_files = [
         {"name": "workload_io_max", "container_path": "/host-cgroup/kubepods/io.max", "access": "read_write", "kind": "file"},
@@ -169,7 +169,7 @@ def check_workflow(root: Path) -> None:
     for use in re.findall(r"(?m)^\s*- uses:\s*(\S+)", workflow):
         require(use == PINNED_CHECKOUT, f"unapproved action: {use}")
     require(len(re.findall(r"(?m)^\s*- uses:\s*", workflow)) == 1, "workflow must contain one checkout action")
-    require(len(re.findall(r"(?m)^permissions:$", workflow)) == 1, "workflow permissions must have one owner")
+    require(len(re.findall(r"(?m)^\s*permissions:\s*$", workflow)) == 1, "workflow permissions must have one owner")
     permission_match = re.search(r"(?ms)^permissions:\n((?:  [^\n]+\n)+)", workflow)
     require(permission_match is not None and permission_match.group(1).splitlines() == ["  contents: read", "  packages: write"], "workflow permissions differ")
     require(workflow.count("${{ github.token }}") == 1, "workflow token use differs")
@@ -181,6 +181,7 @@ def check_workflow(root: Path) -> None:
     allowed_public_images = {PINNED_BUILDER, PINNED_BUILDKIT, PINNED_SBOM}
     referenced_images = set(re.findall(r"docker\.io/[A-Za-z0-9_./:@-]+", workflow))
     require(referenced_images == allowed_public_images, "workflow public image allowlist differs")
+    require(re.search(r"(?:ghcr\.io|quay\.io|gcr\.io)/(?!(?:shintosh/shinto-io-qos)(?:[:@]))", workflow) is None, "workflow contains an unapproved registry image")
 
 
 def check_private_markers(root: Path) -> None:

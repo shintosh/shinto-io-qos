@@ -149,6 +149,17 @@ class PublicationContractTest(unittest.TestCase):
         result = self.run_checker()
         self.assertIn("runtime contract differs", result.stderr)
 
+    def test_rejects_contract_trailing_whitespace(self) -> None:
+        target = self.fixture / "contract/runtime.json"
+        target.write_text(target.read_text().removesuffix("\n") + " \n")
+        result = self.run_checker()
+        self.assertIn("end with one newline", result.stderr)
+
+    def test_rejects_job_level_permissions(self) -> None:
+        self.mutate(".github/workflows/release.yml", "  publish:\n", "  publish:\n    permissions:\n      contents: write\n")
+        result = self.run_checker()
+        self.assertIn("permissions must have one owner", result.stderr)
+
     def test_rejects_extra_permission(self) -> None:
         self.mutate(".github/workflows/release.yml", "  packages: write\n", "  packages: write\n  actions: read\n")
         result = self.run_checker()
@@ -165,6 +176,12 @@ class PublicationContractTest(unittest.TestCase):
         target.write_text(target.read_text() + "\n# docker pull docker.io/library/alpine:latest\n")
         result = self.run_checker()
         self.assertIn("workflow public image allowlist differs", result.stderr)
+
+    def test_rejects_private_registry_image(self) -> None:
+        target = self.fixture / ".github/workflows/release.yml"
+        target.write_text(target.read_text() + "\n# docker pull ghcr.io/example/private:latest\n")
+        result = self.run_checker()
+        self.assertIn("unapproved registry image", result.stderr)
 
 
 if __name__ == "__main__":

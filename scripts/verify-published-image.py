@@ -48,10 +48,29 @@ def marker_paths(value: object, marker: str, path: str) -> list[str]:
     return matches
 
 
+def platform_manifest_digest(manifest: object) -> str:
+    require(isinstance(manifest, dict), "manifest index is not an object")
+    matches = []
+    for descriptor in manifest.get("manifests", []):
+        if descriptor.get("platform") == {"os": "linux", "architecture": "amd64"}:
+            matches.append(descriptor.get("digest"))
+    require(len(matches) == 1 and re.fullmatch(r"sha256:[0-9a-f]{64}", str(matches[0])) is not None, "manifest lacks one Linux amd64 image")
+    return str(matches[0])
+
+
+def require_attestation_subject(document: object, digest: str, name: str) -> None:
+    digest_hex = digest.removeprefix("sha256:")
+    require(isinstance(document, dict), f"{name} is not an object")
+    subjects = document.get("subject", [])
+    require(any(subject.get("digest", {}).get("sha256") == digest_hex for subject in subjects if isinstance(subject, dict)), f"{name} subject differs from image manifest")
+
+
 def verify(args: argparse.Namespace) -> None:
     require(re.fullmatch(r"sha256:[0-9a-f]{64}", args.digest) is not None, "image digest is not exact")
-    manifest_digest = "sha256:" + hashlib.sha256(args.manifest.read_bytes()).hexdigest()
+    manifest_bytes = args.manifest.read_bytes()
+    manifest_digest = "sha256:" + hashlib.sha256(manifest_bytes).hexdigest()
     require(manifest_digest == args.digest, "manifest bytes do not match requested digest")
+    platform_digest = platform_manifest_digest(json.loads(manifest_bytes))
     require(re.fullmatch(r"[0-9a-f]{40}", args.source_revision) is not None, "source revision is not exact")
     source_contract = args.contract.read_bytes()
     require(source_contract == args.embedded_contract.read_bytes(), "embedded runtime contract differs")
@@ -63,19 +82,23 @@ def verify(args: argparse.Namespace) -> None:
     sbom_text = flattened(sbom)
     image_text = flattened(image)
     require(len(provenance_text) > 100, "maximum provenance is empty")
-    require("https://slsa.dev/provenance/v1" in provenance_text, "provenance predicate type differs")
-    require('"parameters":true' in provenance_text and '"environment":true' in provenance_text and '"materials":true' in provenance_text, "maximum provenance completeness differs")
-    require(SOURCE in provenance_text, "provenance source differs")
-    require(args.source_revision in provenance_text, "provenance revision differs")
+    require(isinstance(provenance, dict) and provenance.get("predicateType") == "https://slsa.dev/provenance/v1", "provenance predicate type differs")
+    completeness = provenance.get("metadata", {}).get("completeness", {})
+    require(completeness == {"parameters": True, "environment": True, "materials": True}, "maximum provenance completeness differs")
+    require(provenance.get("source") == SOURCE, "provenance source differs")
+    require(provenance.get("revision") == args.source_revision, "provenance revision differs")
     require(BUILDER_DIGEST in provenance_text, "provenance lacks pinned Go builder")
-    require(len(sbom_text) > 100 and "SPDX" in sbom_text.upper(), "SPDX SBOM is empty")
+    require(isinstance(sbom, dict) and len(sbom_text) > 100 and re.fullmatch(r"SPDX-[0-9.]+", str(sbom.get("spdxVersion"))) is not None, "SPDX SBOM is empty")
+    require_attestation_subject(provenance, platform_digest, "provenance")
+    require_attestation_subject(sbom, platform_digest, "SBOM")
     require(SBOM_DIGEST in provenance_text or SBOM_DIGEST in sbom_text, "attestations lack pinned SBOM generator")
-    require('"os":"linux"' in image_text.lower(), "image OS differs")
-    require('"architecture":"amd64"' in image_text.lower(), "image architecture differs")
-    require(SOURCE in image_text, "OCI source label differs")
-    require(args.source_revision in image_text, "OCI revision label differs")
-    require(contract_hash in image_text, "contract label differs")
-    require('"io.shintosh.shinto-io-qos.base":"scratch"' in image_text, "scratch result differs")
+    require(isinstance(image, dict) and image.get("os") == "linux", "image OS differs")
+    require(image.get("architecture") == "amd64", "image architecture differs")
+    labels = image.get("config", {}).get("Labels", {})
+    require(labels.get("org.opencontainers.image.source") == SOURCE, "OCI source label differs")
+    require(labels.get("org.opencontainers.image.revision") == args.source_revision, "OCI revision label differs")
+    require(labels.get("io.shintosh.shinto-io-qos.contract-sha256") == contract_hash, "contract label differs")
+    require(labels.get("io.shintosh.shinto-io-qos.base") == "scratch", "scratch result differs")
     documents = (("provenance", provenance), ("sbom", sbom), ("image", image))
     for forbidden in ("github.com/xojigsx", "ghcr.io/xojigsx", "authorization", "password", "private key"):
         paths = [path for name, document in documents for path in marker_paths(document, forbidden, name)]
