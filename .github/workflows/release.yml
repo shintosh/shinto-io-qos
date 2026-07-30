@@ -85,6 +85,7 @@ jobs:
           docker buildx imagetools inspect "${image}" --format '{{json .Provenance}}' > "${RUNNER_TEMP}/provenance.json"
           docker buildx imagetools inspect "${image}" --format '{{json .SBOM}}' > "${RUNNER_TEMP}/sbom.json"
           docker buildx imagetools inspect "${image}" --format '{{json .Image}}' > "${RUNNER_TEMP}/image.json"
+          docker buildx imagetools inspect "${image}" --raw > "${RUNNER_TEMP}/manifest.json"
           docker pull "${image}"
           container="$(docker create "${image}")"
           docker cp "${container}:/shinto-io-qos-runtime-contract.json" "${RUNNER_TEMP}/runtime.json"
@@ -93,7 +94,7 @@ jobs:
             --digest "${digest}" --source-revision "${GITHUB_SHA}" \
             --contract contract/runtime.json --embedded-contract "${RUNNER_TEMP}/runtime.json" \
             --provenance "${RUNNER_TEMP}/provenance.json" --sbom "${RUNNER_TEMP}/sbom.json" \
-            --image "${RUNNER_TEMP}/image.json"
+            --image "${RUNNER_TEMP}/image.json" --manifest "${RUNNER_TEMP}/manifest.json"
 
       - name: Remove isolated builder
         if: always()

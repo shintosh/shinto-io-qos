@@ -20,6 +20,7 @@ ARG CONTRACT_SHA256
 LABEL org.opencontainers.image.source="https://github.com/shintosh/shinto-io-qos"
 LABEL org.opencontainers.image.revision="${SOURCE_REVISION}"
 LABEL io.shintosh.shinto-io-qos.contract-sha256="${CONTRACT_SHA256}"
+LABEL io.shintosh.shinto-io-qos.base="scratch"
 COPY --from=build /out/shinto-io-governor /shinto-io-governor
 COPY contract/runtime.json /shinto-io-qos-runtime-contract.json
 COPY cmd/shinto-io-governor/rootfs/host-cgroup/kubepods/io.max /host-cgroup/kubepods/io.max

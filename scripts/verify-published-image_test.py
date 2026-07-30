@@ -11,7 +11,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 VERIFY = ROOT / "scripts/verify-published-image.py"
 REVISION = "1" * 40
-DIGEST = "sha256:" + "2" * 64
 
 
 class PublishedImageVerifierTest(unittest.TestCase):
@@ -22,6 +21,8 @@ class PublishedImageVerifierTest(unittest.TestCase):
         contract = (ROOT / "contract/runtime.json").read_bytes()
         (self.root / "contract.json").write_bytes(contract)
         (self.root / "embedded.json").write_bytes(contract)
+        (self.root / "manifest.json").write_bytes(b'{"schemaVersion":2,"fixture":"index"}\n')
+        self.digest = "sha256:" + hashlib.sha256((self.root / "manifest.json").read_bytes()).hexdigest()
         contract_hash = hashlib.sha256(contract).hexdigest()
         self.provenance = {
             "predicateType": "https://slsa.dev/provenance/v1",
@@ -45,6 +46,7 @@ class PublishedImageVerifierTest(unittest.TestCase):
                 "org.opencontainers.image.source": "https://github.com/shintosh/shinto-io-qos",
                 "org.opencontainers.image.revision": REVISION,
                 "io.shintosh.shinto-io-qos.contract-sha256": contract_hash,
+                "io.shintosh.shinto-io-qos.base": "scratch",
             }},
         }
 
@@ -56,10 +58,11 @@ class PublishedImageVerifierTest(unittest.TestCase):
         self.write("sbom.json", self.sbom)
         self.write("image.json", self.image)
         return subprocess.run([
-            "python3", str(VERIFY), "--digest", DIGEST, "--source-revision", REVISION,
+            "python3", str(VERIFY), "--digest", self.digest, "--source-revision", REVISION,
             "--contract", str(self.root / "contract.json"), "--embedded-contract", str(self.root / "embedded.json"),
             "--provenance", str(self.root / "provenance.json"), "--sbom", str(self.root / "sbom.json"),
             "--image", str(self.root / "image.json"),
+            "--manifest", str(self.root / "manifest.json"),
         ], text=True, capture_output=True)
 
     def test_valid_metadata(self) -> None:
@@ -86,6 +89,11 @@ class PublishedImageVerifierTest(unittest.TestCase):
         result = self.run_verifier()
         self.assertIn("forbidden marker", result.stderr)
         self.assertIn("provenance.private", result.stderr)
+
+    def test_rejects_manifest_digest_mismatch(self) -> None:
+        self.digest = "sha256:" + "2" * 64
+        result = self.run_verifier()
+        self.assertIn("manifest bytes do not match requested digest", result.stderr)
 
 
 if __name__ == "__main__":

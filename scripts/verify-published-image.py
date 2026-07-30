@@ -50,6 +50,8 @@ def marker_paths(value: object, marker: str, path: str) -> list[str]:
 
 def verify(args: argparse.Namespace) -> None:
     require(re.fullmatch(r"sha256:[0-9a-f]{64}", args.digest) is not None, "image digest is not exact")
+    manifest_digest = "sha256:" + hashlib.sha256(args.manifest.read_bytes()).hexdigest()
+    require(manifest_digest == args.digest, "manifest bytes do not match requested digest")
     require(re.fullmatch(r"[0-9a-f]{40}", args.source_revision) is not None, "source revision is not exact")
     source_contract = args.contract.read_bytes()
     require(source_contract == args.embedded_contract.read_bytes(), "embedded runtime contract differs")
@@ -61,6 +63,8 @@ def verify(args: argparse.Namespace) -> None:
     sbom_text = flattened(sbom)
     image_text = flattened(image)
     require(len(provenance_text) > 100, "maximum provenance is empty")
+    require("https://slsa.dev/provenance/v1" in provenance_text, "provenance predicate type differs")
+    require('"parameters":true' in provenance_text and '"environment":true' in provenance_text and '"materials":true' in provenance_text, "maximum provenance completeness differs")
     require(SOURCE in provenance_text, "provenance source differs")
     require(args.source_revision in provenance_text, "provenance revision differs")
     require(BUILDER_DIGEST in provenance_text, "provenance lacks pinned Go builder")
@@ -71,6 +75,7 @@ def verify(args: argparse.Namespace) -> None:
     require(SOURCE in image_text, "OCI source label differs")
     require(args.source_revision in image_text, "OCI revision label differs")
     require(contract_hash in image_text, "contract label differs")
+    require('"io.shintosh.shinto-io-qos.base":"scratch"' in image_text, "scratch result differs")
     documents = (("provenance", provenance), ("sbom", sbom), ("image", image))
     for forbidden in ("github.com/xojigsx", "ghcr.io/xojigsx", "authorization", "password", "private key"):
         paths = [path for name, document in documents for path in marker_paths(document, forbidden, name)]
@@ -81,7 +86,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--digest", required=True)
     parser.add_argument("--source-revision", required=True)
-    for name in ("contract", "embedded-contract", "provenance", "sbom", "image"):
+    for name in ("contract", "embedded-contract", "provenance", "sbom", "image", "manifest"):
         parser.add_argument(f"--{name}", type=Path, required=True)
     args = parser.parse_args()
     try:

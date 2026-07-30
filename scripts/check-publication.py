@@ -82,14 +82,23 @@ def check_go(root: Path) -> None:
 
 def check_contract(root: Path) -> None:
     raw = read(root, "contract/runtime.json")
-    require(raw.endswith("\n"), "runtime contract must end with one newline")
+    require(raw.endswith("\n") and not raw.endswith("\n\n"), "runtime contract must end with one newline")
     contract = json.loads(raw)
-    require(contract["schema_version"] == 1, "runtime contract schema must be 1")
-    require(contract["platform"] == {"os": "linux", "architecture": "amd64"}, "runtime platform must be linux/amd64")
-    require(contract["command"] == {"name": "shinto-io-governor", "entrypoint": "/shinto-io-governor", "modes": ["observe", "enforce", "clear"]}, "runtime command contract differs")
-    require(contract["metrics_family_prefix"] == "shinto_io_governor_", "metrics prefix differs")
-    paths = {item["container_path"] for item in contract["files"]}
-    require(paths == {"/" + name for name in ROOTFS}, "runtime contract paths differ")
+    expected_files = [
+        {"name": "workload_io_max", "container_path": "/host-cgroup/kubepods/io.max", "access": "read_write", "kind": "file"},
+        {"name": "workload_io_stat", "container_path": "/host-cgroup/kubepods/io.stat", "access": "read_only", "kind": "file"},
+        {"name": "etcd_io_latency", "container_path": "/host-cgroup/podruntime/etcd/io.latency", "access": "read_write", "kind": "file"},
+        {"name": "etcd_io_stat", "container_path": "/host-cgroup/podruntime/etcd/io.stat", "access": "read_only", "kind": "file"},
+        {"name": "governor_metrics", "container_path": "/var/run/shinto-io-governor.prom", "access": "read_write", "kind": "file_or_create"},
+    ]
+    expected = {
+        "schema_version": 1,
+        "platform": {"os": "linux", "architecture": "amd64"},
+        "command": {"name": "shinto-io-governor", "entrypoint": "/shinto-io-governor", "modes": ["observe", "enforce", "clear"]},
+        "files": expected_files,
+        "metrics_family_prefix": "shinto_io_governor_",
+    }
+    require(contract == expected, "runtime contract differs")
     rootfs = root / "cmd/shinto-io-governor/rootfs"
     actual = {str(path.relative_to(rootfs)) for path in rootfs.rglob("*") if path.is_file()}
     require(actual == ROOTFS, "rootfs file inventory differs")
@@ -104,6 +113,7 @@ def check_docker(root: Path) -> None:
     require("ENTRYPOINT [\"/shinto-io-governor\"]" in dockerfile, "entrypoint differs")
     require("USER 0:0" in dockerfile, "final user must be explicit")
     require("io.shintosh.shinto-io-qos.contract-sha256" in dockerfile, "contract label is missing")
+    require('LABEL io.shintosh.shinto-io-qos.base="scratch"' in dockerfile, "scratch result label is missing")
     from_lines = [line.strip() for line in dockerfile.splitlines() if line.strip().startswith("FROM ")]
     require(from_lines == [f"FROM {PINNED_BUILDER} AS build", "FROM scratch"], "Dockerfile stages differ")
     expected_copies = {
@@ -158,11 +168,19 @@ def check_workflow(root: Path) -> None:
         require(forbidden not in workflow, f"workflow contains forbidden contract: {forbidden}")
     for use in re.findall(r"(?m)^\s*- uses:\s*(\S+)", workflow):
         require(use == PINNED_CHECKOUT, f"unapproved action: {use}")
+    require(len(re.findall(r"(?m)^\s*- uses:\s*", workflow)) == 1, "workflow must contain one checkout action")
     require(len(re.findall(r"(?m)^permissions:$", workflow)) == 1, "workflow permissions must have one owner")
+    permission_match = re.search(r"(?ms)^permissions:\n((?:  [^\n]+\n)+)", workflow)
+    require(permission_match is not None and permission_match.group(1).splitlines() == ["  contents: read", "  packages: write"], "workflow permissions differ")
     require(workflow.count("${{ github.token }}") == 1, "workflow token use differs")
+    require(re.search(r"\$\{\{\s*secrets\.", workflow, re.IGNORECASE) is None, "extra workflow secrets are forbidden")
     require("docker login ghcr.io" in workflow, "workflow token must be limited to GHCR login")
     require("repository:" not in workflow, "workflow cannot check out another repository")
     require(re.search(r"(?m)^\s+inputs:\s*$", workflow) is None, "workflow dispatch inputs are forbidden")
+    require(workflow.count("ref: ${{ github.sha }}") == 1, "workflow checkout ref differs")
+    allowed_public_images = {PINNED_BUILDER, PINNED_BUILDKIT, PINNED_SBOM}
+    referenced_images = set(re.findall(r"docker\.io/[A-Za-z0-9_./:@-]+", workflow))
+    require(referenced_images == allowed_public_images, "workflow public image allowlist differs")
 
 
 def check_private_markers(root: Path) -> None:

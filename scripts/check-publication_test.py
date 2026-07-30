@@ -144,6 +144,28 @@ class PublicationContractTest(unittest.TestCase):
         result = self.run_checker()
         self.assertIn("rootfs placeholders must be empty", result.stderr)
 
+    def test_rejects_contract_access_or_duplicate_drift(self) -> None:
+        self.mutate("contract/runtime.json", '"access": "read_write"', '"access": "read_only"')
+        result = self.run_checker()
+        self.assertIn("runtime contract differs", result.stderr)
+
+    def test_rejects_extra_permission(self) -> None:
+        self.mutate(".github/workflows/release.yml", "  packages: write\n", "  packages: write\n  actions: read\n")
+        result = self.run_checker()
+        self.assertIn("workflow permissions differ", result.stderr)
+
+    def test_rejects_extra_secret(self) -> None:
+        target = self.fixture / ".github/workflows/release.yml"
+        target.write_text(target.read_text() + "\n# ${{ secrets.EXTRA }}\n")
+        result = self.run_checker()
+        self.assertIn("extra workflow secrets", result.stderr)
+
+    def test_rejects_additional_mutable_image(self) -> None:
+        target = self.fixture / ".github/workflows/release.yml"
+        target.write_text(target.read_text() + "\n# docker pull docker.io/library/alpine:latest\n")
+        result = self.run_checker()
+        self.assertIn("workflow public image allowlist differs", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
