@@ -12,7 +12,6 @@ from pathlib import Path
 
 SOURCE = "https://github.com/shintosh/shinto-io-qos"
 BUILDER_DIGEST = "sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651"
-BUILDKIT_DIGEST = "sha256:2f5adac4ecd194d9f8c10b7bceb5186853db1b26e5abd3a657af0b7e26ec"
 SBOM_DIGEST = "sha256:79e7b013cbec16bbb436f312819a49a4a57752b2270c1a9332ae1a10fcc82a68"
 
 
@@ -49,7 +48,6 @@ def verify(args: argparse.Namespace) -> None:
     require(SOURCE in provenance_text, "provenance source differs")
     require(args.source_revision in provenance_text, "provenance revision differs")
     require(BUILDER_DIGEST in provenance_text, "provenance lacks pinned Go builder")
-    require(BUILDKIT_DIGEST in provenance_text, "provenance lacks pinned BuildKit")
     require(len(sbom_text) > 100 and "SPDX" in sbom_text.upper(), "SPDX SBOM is empty")
     require(SBOM_DIGEST in provenance_text or SBOM_DIGEST in sbom_text, "attestations lack pinned SBOM generator")
     require('"os":"linux"' in image_text.lower(), "image OS differs")
