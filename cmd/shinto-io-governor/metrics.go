@@ -2,9 +2,8 @@ package main
 
 import (
 	"bytes"
-	"io"
-	"io/fs"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -27,24 +26,20 @@ var (
 	writeIOPSBuckets = []uint64{100, 500, 1000, 2000, 4000, 8000, 16000}
 )
 
-type syncWriteCloser interface {
-	Write([]byte) (int, error)
-	Sync() error
-	Close() error
-}
-
-type metricsFileOpener func(string, int, fs.FileMode) (syncWriteCloser, error)
-
-func writeMetricsFile(path string, value []byte, open metricsFileOpener) error {
-	file, err := open(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+func writeMetricsFile(path string, value []byte) error {
+	file, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
-		return fmt.Errorf("open metrics file: %w", err)
+		return fmt.Errorf("create temporary metrics file: %w", err)
 	}
-	written, err := file.Write(value)
-	if err == nil && written != len(value) {
-		err = io.ErrShortWrite
+	tempPath := file.Name()
+	defer func() {
+		_ = os.Remove(tempPath)
+	}()
+	if err := file.Chmod(0o644); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("set metrics file mode: %w", err)
 	}
-	if err != nil {
+	if _, err := file.Write(value); err != nil {
 		_ = file.Close()
 		return fmt.Errorf("write metrics file: %w", err)
 	}
@@ -54,6 +49,9 @@ func writeMetricsFile(path string, value []byte, open metricsFileOpener) error {
 	}
 	if err := file.Close(); err != nil {
 		return fmt.Errorf("close metrics file: %w", err)
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return fmt.Errorf("publish metrics file: %w", err)
 	}
 	return nil
 }

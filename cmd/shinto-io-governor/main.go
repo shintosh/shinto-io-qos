@@ -96,7 +96,22 @@ func run(ctx context.Context, deps runDependencies) error {
 		deps.logger.Error("I/O policy reconcile retries exhausted", "attempts", consecutiveFailures, "error", err)
 	}
 
+	publishNow := func() {
+		if err := deps.publish(state, reconcileSuccess, lastSuccess, histograms); err != nil {
+			publishFailures++
+			if publishFailures < reconcileFailureLimit {
+				deps.logger.Debug("metrics publish will retry", "attempt", publishFailures, "error", err)
+			} else {
+				deps.logger.Error("metrics publish retries exhausted", "attempts", publishFailures, "error", err)
+			}
+			return
+		}
+		publishFailures = 0
+		histograms = newSampleHistograms()
+	}
+
 	reconcileNow()
+	publishNow()
 	for {
 		select {
 		case <-ctx.Done():
@@ -121,17 +136,7 @@ func run(ctx context.Context, deps runDependencies) error {
 				return fmt.Errorf("governor publish ticker closed")
 			}
 			reconcileNow()
-			if err := deps.publish(state, reconcileSuccess, lastSuccess, histograms); err != nil {
-				publishFailures++
-				if publishFailures < reconcileFailureLimit {
-					deps.logger.Debug("metrics publish will retry", "attempt", publishFailures, "error", err)
-				} else {
-					deps.logger.Error("metrics publish retries exhausted", "attempts", publishFailures, "error", err)
-				}
-				continue
-			}
-			publishFailures = 0
-			histograms = newSampleHistograms()
+			publishNow()
 		}
 	}
 }
@@ -178,9 +183,6 @@ func runCommand(args []string) error {
 	publishTicker := time.NewTicker(30 * time.Second)
 	defer publishTicker.Stop()
 
-	open := func(path string, flag int, perm os.FileMode) (syncWriteCloser, error) {
-		return os.OpenFile(path, flag, perm)
-	}
 	publish := func(state reconcileState, success bool, lastSuccess time.Time, histograms sampleHistograms) error {
 		snapshot := metricsSnapshot{
 			buildRevision: buildRevision, policyIdentity: policyIdentity, mode: selected,
@@ -196,7 +198,7 @@ func runCommand(args []string) error {
 				snapshot.observedTarget = embeddedPolicy.targetMicros
 			}
 		}
-		return writeMetricsFile(metricsPath, renderMetrics(snapshot), open)
+		return writeMetricsFile(metricsPath, renderMetrics(snapshot))
 	}
 
 	slog.Info("shinto-io-governor started", "mode", selected, "policy", policyIdentity)
