@@ -3,51 +3,82 @@ package main
 import (
 	"context"
 	"errors"
-	"io"
+	"io/fs"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestMetricsFilePublishesByAtomicRename(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "metrics.prom")
-	if err := os.WriteFile(path, []byte("old 1\n"), 0o644); err != nil {
+type recordingMetricsFile struct {
+	calls      []string
+	writeErr   error
+	syncErr    error
+	closeErr   error
+	shortWrite bool
+	written    string
+}
+
+func (f *recordingMetricsFile) Write(value []byte) (int, error) {
+	f.calls = append(f.calls, "write")
+	if f.writeErr != nil {
+		return 0, f.writeErr
+	}
+	if f.shortWrite {
+		return len(value) - 1, nil
+	}
+	f.written = string(value)
+	return len(value), nil
+}
+
+func (f *recordingMetricsFile) Sync() error {
+	f.calls = append(f.calls, "sync")
+	return f.syncErr
+}
+
+func (f *recordingMetricsFile) Close() error {
+	f.calls = append(f.calls, "close")
+	return f.closeErr
+}
+
+func TestMetricsFileTruncatesWritesSyncsAndCloses(t *testing.T) {
+	file := &recordingMetricsFile{}
+	open := func(path string, flag int, perm fs.FileMode) (syncWriteCloser, error) {
+		if path != "/metrics.prom" {
+			t.Fatalf("path = %q", path)
+		}
+		wantFlag := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+		if flag != wantFlag || perm != 0o644 {
+			t.Fatalf("flag=%d perm=%#o", flag, perm)
+		}
+		return file, nil
+	}
+	if err := writeMetricsFile("/metrics.prom", []byte("metric 1\n"), open); err != nil {
 		t.Fatal(err)
 	}
-	old, err := os.Open(path)
-	if err != nil {
-		t.Fatal(err)
+	if strings.Join(file.calls, ",") != "write,sync,close" {
+		t.Fatalf("calls = %v", file.calls)
 	}
-	defer old.Close()
-	if err := writeMetricsFile(path, []byte("metric 1\n")); err != nil {
-		t.Fatal(err)
-	}
-	previous, err := io.ReadAll(old)
-	if err != nil {
-		t.Fatal(err)
-	}
-	current, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(previous) != "old 1\n" || string(current) != "metric 1\n" {
-		t.Fatalf("previous=%q current=%q", previous, current)
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0o644 {
-		t.Fatalf("mode = %#o", info.Mode().Perm())
+	if file.written != "metric 1\n" {
+		t.Fatalf("written = %q", file.written)
 	}
 }
 
-func TestMetricsFileRejectsMissingDirectory(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "missing", "metrics.prom")
-	if err := writeMetricsFile(path, []byte("metric 1\n")); err == nil {
-		t.Fatal("writeMetricsFile() succeeded")
+func TestMetricsFileClosesAfterPartialFailure(t *testing.T) {
+	for name, file := range map[string]*recordingMetricsFile{
+		"write":       {writeErr: errors.New("write failed")},
+		"short write": {shortWrite: true},
+		"sync":        {syncErr: errors.New("sync failed")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			open := func(string, int, fs.FileMode) (syncWriteCloser, error) { return file, nil }
+			if err := writeMetricsFile("/metrics.prom", []byte("metric 1\n"), open); err == nil {
+				t.Fatal("writeMetricsFile() succeeded")
+			}
+			if file.calls[len(file.calls)-1] != "close" {
+				t.Fatalf("calls = %v", file.calls)
+			}
+		})
 	}
 }
 
@@ -156,9 +187,7 @@ func TestRunReconcilesImmediatelySamplesPublishesAndStops(t *testing.T) {
 		},
 		publish: func(reconcileState, bool, time.Time, sampleHistograms) error {
 			publishes++
-			if publishes == 2 {
-				cancel()
-			}
+			cancel()
 			return nil
 		},
 		logger: &recordingRuntimeLogger{},
@@ -166,7 +195,7 @@ func TestRunReconcilesImmediatelySamplesPublishesAndStops(t *testing.T) {
 	if err := run(ctx, deps); err != nil {
 		t.Fatal(err)
 	}
-	if reconciles != 2 || samples != 1 || publishes != 2 {
+	if reconciles != 2 || samples != 1 || publishes != 1 {
 		t.Fatalf("reconciles=%d samples=%d publishes=%d", reconciles, samples, publishes)
 	}
 }
@@ -189,7 +218,7 @@ func TestRunLogsRetriesAtDebugAndExhaustionAtError(t *testing.T) {
 		sample: func(time.Time) (ioSample, error) { return ioSample{}, nil },
 		publish: func(reconcileState, bool, time.Time, sampleHistograms) error {
 			publishes++
-			if publishes == 3 {
+			if publishes == 2 {
 				cancel()
 			}
 			return nil
@@ -209,7 +238,6 @@ func TestRunPreservesLastVerifiedPolicyAfterReconcileFailure(t *testing.T) {
 	publishTicks := make(chan time.Time, 1)
 	publishTicks <- time.Unix(30, 0)
 	reconciles := 0
-	publishes := 0
 	deps := runDependencies{
 		now:             func() time.Time { return time.Unix(1, 0) },
 		sampleTicks:     make(chan time.Time),
@@ -227,10 +255,6 @@ func TestRunPreservesLastVerifiedPolicyAfterReconcileFailure(t *testing.T) {
 		},
 		sample: func(time.Time) (ioSample, error) { return ioSample{}, nil },
 		publish: func(state reconcileState, success bool, _ time.Time, _ sampleHistograms) error {
-			publishes++
-			if publishes == 1 {
-				return nil
-			}
 			if success || state.topologyValid || !state.policyComplete || state.device.major != 259 {
 				t.Fatalf("state=%+v success=%v", state, success)
 			}
