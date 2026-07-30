@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "platform": {
+    "os": "linux",
+    "architecture": "amd64"
+  },
+  "command": {
+    "name": "shinto-io-governor",
+    "entrypoint": "/shinto-io-governor",
+    "modes": ["observe", "enforce", "clear"]
+  },
+  "files": [
+    {"name": "workload_io_max", "container_path": "/host-cgroup/kubepods/io.max", "access": "read_write", "kind": "file"},
+    {"name": "workload_io_stat", "container_path": "/host-cgroup/kubepods/io.stat", "access": "read_only", "kind": "file"},
+    {"name": "etcd_io_latency", "container_path": "/host-cgroup/podruntime/etcd/io.latency", "access": "read_write", "kind": "file"},
+    {"name": "etcd_io_stat", "container_path": "/host-cgroup/podruntime/etcd/io.stat", "access": "read_only", "kind": "file"},
+    {"name": "governor_metrics", "container_path": "/var/run/shinto-io-governor.prom", "access": "read_write", "kind": "file_or_create"}
+  ],
+  "metrics_family_prefix": "shinto_io_governor_"
+}
