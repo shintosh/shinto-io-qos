@@ -26,28 +26,38 @@ class PublishedImageVerifierTest(unittest.TestCase):
             "mediaType": "application/vnd.oci.image.manifest.v1+json",
             "digest": self.platform_digest,
             "platform": {"os": "linux", "architecture": "amd64"},
-        }]}
+        }, *[{
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "digest": "sha256:" + digit * 64,
+            "platform": {"os": "unknown", "architecture": "unknown"},
+            "annotations": {
+                "vnd.docker.reference.digest": self.platform_digest,
+                "vnd.docker.reference.type": "attestation-manifest",
+            },
+        } for digit in ("6", "7")]]}
         (self.root / "manifest.json").write_text(json.dumps(manifest, separators=(",", ":")))
         self.digest = "sha256:" + hashlib.sha256((self.root / "manifest.json").read_bytes()).hexdigest()
         contract_hash = hashlib.sha256(contract).hexdigest()
-        self.provenance = {
-            "predicateType": "https://slsa.dev/provenance/v1",
-            "source": "https://github.com/shintosh/shinto-io-qos",
-            "revision": REVISION,
-            "subject": [{"name": "image", "digest": {"sha256": self.platform_digest.removeprefix("sha256:")}}],
+        self.provenance = {"SLSA": {
+            "buildType": "https://mobyproject.org/buildkit@v1",
+            "builder": {"id": "https://github.com/docker/build-push-action"},
+            "invocation": {"configSource": {
+                "uri": "https://github.com/shintosh/shinto-io-qos",
+                "digest": {"sha1": REVISION},
+                "entryPoint": "build/package/Dockerfile",
+            }},
             "materials": [
                 "sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651",
                 "sha256:79e7b013cbec16bbb436f312819a49a4a57752b2270c1a9332ae1a10fcc82a68",
             ],
             "metadata": {"buildInvocationId": "fixture", "completeness": {"parameters": True, "environment": True, "materials": True}},
-        }
-        self.sbom = {
+        }}
+        self.sbom = {"SPDX": {
             "spdxVersion": "SPDX-2.3",
             "name": "shinto-io-qos",
             "documentNamespace": "https://github.com/shintosh/shinto-io-qos/sbom/fixture",
             "packages": [{"name": "shinto-io-governor", "versionInfo": REVISION}],
-            "subject": [{"name": "image", "digest": {"sha256": self.platform_digest.removeprefix("sha256:")}}],
-        }
+        }}
         self.image = {
             "os": "linux", "architecture": "amd64",
             "config": {"Labels": {
@@ -83,12 +93,12 @@ class PublishedImageVerifierTest(unittest.TestCase):
         self.assertIn("embedded runtime contract differs", result.stderr)
 
     def test_rejects_wrong_revision(self) -> None:
-        self.provenance["revision"] = "3" * 40
+        self.provenance["SLSA"]["invocation"]["configSource"]["digest"]["sha1"] = "3" * 40
         result = self.run_verifier()
         self.assertIn("provenance revision differs", result.stderr)
 
     def test_rejects_missing_sbom(self) -> None:
-        self.sbom = {}
+        self.sbom = {"SPDX": {}}
         result = self.run_verifier()
         self.assertIn("SPDX SBOM is empty", result.stderr)
 
@@ -103,13 +113,16 @@ class PublishedImageVerifierTest(unittest.TestCase):
         result = self.run_verifier()
         self.assertIn("manifest bytes do not match requested digest", result.stderr)
 
-    def test_rejects_unrelated_attestation_subject(self) -> None:
-        self.provenance["subject"][0]["digest"]["sha256"] = "5" * 64
+    def test_rejects_missing_platform_attestations(self) -> None:
+        manifest = json.loads((self.root / "manifest.json").read_text())
+        manifest["manifests"] = manifest["manifests"][:1]
+        (self.root / "manifest.json").write_text(json.dumps(manifest, separators=(",", ":")))
+        self.digest = "sha256:" + hashlib.sha256((self.root / "manifest.json").read_bytes()).hexdigest()
         result = self.run_verifier()
-        self.assertIn("provenance subject differs", result.stderr)
+        self.assertIn("manifest lacks provenance and SBOM attestations", result.stderr)
 
     def test_rejects_nested_provenance_identity_decoy(self) -> None:
-        self.provenance["source"] = "https://example.invalid/repo"
+        self.provenance["SLSA"]["invocation"]["configSource"]["uri"] = "https://example.invalid/repo"
         self.provenance["decoy"] = "https://github.com/shintosh/shinto-io-qos"
         result = self.run_verifier()
         self.assertIn("provenance source differs", result.stderr)

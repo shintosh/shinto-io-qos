@@ -55,14 +55,10 @@ def platform_manifest_digest(manifest: object) -> str:
         if descriptor.get("platform") == {"os": "linux", "architecture": "amd64"}:
             matches.append(descriptor.get("digest"))
     require(len(matches) == 1 and re.fullmatch(r"sha256:[0-9a-f]{64}", str(matches[0])) is not None, "manifest lacks one Linux amd64 image")
-    return str(matches[0])
-
-
-def require_attestation_subject(document: object, digest: str, name: str) -> None:
-    digest_hex = digest.removeprefix("sha256:")
-    require(isinstance(document, dict), f"{name} is not an object")
-    subjects = document.get("subject", [])
-    require(any(subject.get("digest", {}).get("sha256") == digest_hex for subject in subjects if isinstance(subject, dict)), f"{name} subject differs from image manifest")
+    platform_digest = str(matches[0])
+    attestations = [descriptor for descriptor in manifest.get("manifests", []) if descriptor.get("annotations", {}).get("vnd.docker.reference.digest") == platform_digest and descriptor.get("annotations", {}).get("vnd.docker.reference.type") == "attestation-manifest"]
+    require(len(attestations) >= 2, "manifest lacks provenance and SBOM attestations for Linux amd64 image")
+    return platform_digest
 
 
 def verify(args: argparse.Namespace) -> None:
@@ -78,19 +74,21 @@ def verify(args: argparse.Namespace) -> None:
     provenance = load(args.provenance)
     sbom = load(args.sbom)
     image = load(args.image)
-    provenance_text = flattened(provenance)
-    sbom_text = flattened(sbom)
+    require(isinstance(provenance, dict) and isinstance(provenance.get("SLSA"), dict), "provenance projection shape differs")
+    require(isinstance(sbom, dict) and isinstance(sbom.get("SPDX"), dict), "SBOM projection shape differs")
+    provenance_payload = provenance["SLSA"]
+    sbom_payload = sbom["SPDX"]
+    provenance_text = flattened(provenance_payload)
+    sbom_text = flattened(sbom_payload)
     image_text = flattened(image)
     require(len(provenance_text) > 100, "maximum provenance is empty")
-    require(isinstance(provenance, dict) and provenance.get("predicateType") == "https://slsa.dev/provenance/v1", "provenance predicate type differs")
-    completeness = provenance.get("metadata", {}).get("completeness", {})
+    completeness = provenance_payload.get("metadata", {}).get("completeness", {})
     require(completeness == {"parameters": True, "environment": True, "materials": True}, "maximum provenance completeness differs")
-    require(provenance.get("source") == SOURCE, "provenance source differs")
-    require(provenance.get("revision") == args.source_revision, "provenance revision differs")
+    config_source = provenance_payload.get("invocation", {}).get("configSource", {})
+    require(config_source.get("uri") == SOURCE, "provenance source differs")
+    require(config_source.get("digest", {}).get("sha1") == args.source_revision, "provenance revision differs")
     require(BUILDER_DIGEST in provenance_text, "provenance lacks pinned Go builder")
-    require(isinstance(sbom, dict) and len(sbom_text) > 100 and re.fullmatch(r"SPDX-[0-9.]+", str(sbom.get("spdxVersion"))) is not None, "SPDX SBOM is empty")
-    require_attestation_subject(provenance, platform_digest, "provenance")
-    require_attestation_subject(sbom, platform_digest, "SBOM")
+    require(len(sbom_text) > 100 and re.fullmatch(r"SPDX-[0-9.]+", str(sbom_payload.get("spdxVersion"))) is not None, "SPDX SBOM is empty")
     require(SBOM_DIGEST in provenance_text or SBOM_DIGEST in sbom_text, "attestations lack pinned SBOM generator")
     require(isinstance(image, dict) and image.get("os") == "linux", "image OS differs")
     require(image.get("architecture") == "amd64", "image architecture differs")

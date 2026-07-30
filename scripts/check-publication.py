@@ -102,7 +102,7 @@ def check_contract(root: Path) -> None:
     rootfs = root / "cmd/shinto-io-governor/rootfs"
     actual = {str(path.relative_to(rootfs)) for path in rootfs.rglob("*") if path.is_file()}
     require(actual == ROOTFS, "rootfs file inventory differs")
-    require(all((rootfs / name).stat().st_size == 0 for name in ROOTFS), "rootfs placeholders must be empty")
+    require(all(not (rootfs / name).is_symlink() and (rootfs / name).stat().st_size == 0 for name in ROOTFS), "rootfs placeholders must be empty regular files")
 
 
 def check_docker(root: Path) -> None:
@@ -181,7 +181,12 @@ def check_workflow(root: Path) -> None:
     allowed_public_images = {PINNED_BUILDER, PINNED_BUILDKIT, PINNED_SBOM}
     referenced_images = set(re.findall(r"docker\.io/[A-Za-z0-9_./:@-]+", workflow))
     require(referenced_images == allowed_public_images, "workflow public image allowlist differs")
-    require(re.search(r"(?:ghcr\.io|quay\.io|gcr\.io)/(?!(?:shintosh/shinto-io-qos)(?:[:@]))", workflow) is None, "workflow contains an unapproved registry image")
+    registry_references = set(re.findall(r"[a-z0-9.-]+\.[a-z]{2,}(?::[0-9]+)?/[A-Za-z0-9_./:@${}-]+", workflow))
+    allowed_registry_references = allowed_public_images | {
+        "ghcr.io/shintosh/shinto-io-qos:${GITHUB_SHA}",
+        "ghcr.io/shintosh/shinto-io-qos@${digest}",
+    }
+    require(registry_references <= allowed_registry_references, "workflow contains an unapproved registry image")
 
 
 def check_private_markers(root: Path) -> None:

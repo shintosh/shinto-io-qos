@@ -183,6 +183,19 @@ class PublicationContractTest(unittest.TestCase):
         result = self.run_checker()
         self.assertIn("unapproved registry image", result.stderr)
 
+    def test_rejects_arbitrary_registry_image(self) -> None:
+        target = self.fixture / ".github/workflows/release.yml"
+        target.write_text(target.read_text() + "\n# docker pull registry.example.test/team/image@sha256:" + "1" * 64 + "\n")
+        result = self.run_checker()
+        self.assertIn("unapproved registry image", result.stderr)
+
+    def test_rejects_rootfs_symlink(self) -> None:
+        target = self.fixture / "cmd/shinto-io-governor/rootfs/host-cgroup/kubepods/io.max"
+        target.unlink()
+        target.symlink_to("io.stat")
+        result = self.run_checker()
+        self.assertIn("empty regular files", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
