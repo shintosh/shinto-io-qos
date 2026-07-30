@@ -1,0 +1,31 @@
+FROM docker.io/library/golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651 AS build
+
+WORKDIR /src
+ARG SOURCE_REVISION
+COPY go.mod ./
+COPY contract/runtime.json ./contract/runtime.json
+COPY cmd/shinto-io-governor/main.go ./cmd/shinto-io-governor/main.go
+COPY cmd/shinto-io-governor/governor.go ./cmd/shinto-io-governor/governor.go
+COPY cmd/shinto-io-governor/governor_test.go ./cmd/shinto-io-governor/governor_test.go
+COPY cmd/shinto-io-governor/metrics.go ./cmd/shinto-io-governor/metrics.go
+COPY cmd/shinto-io-governor/metrics_test.go ./cmd/shinto-io-governor/metrics_test.go
+RUN --network=none GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local go list -deps ./cmd/shinto-io-governor
+RUN --network=none GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local go test ./cmd/shinto-io-governor
+RUN --network=none GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local go test -race ./cmd/shinto-io-governor
+RUN --network=none CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local go build -trimpath -ldflags "-s -w -X main.buildRevision=${SOURCE_REVISION}" -o /out/shinto-io-governor ./cmd/shinto-io-governor
+
+FROM scratch
+ARG SOURCE_REVISION
+ARG CONTRACT_SHA256
+LABEL org.opencontainers.image.source="https://github.com/shintosh/shinto-io-qos"
+LABEL org.opencontainers.image.revision="${SOURCE_REVISION}"
+LABEL io.shintosh.shinto-io-qos.contract-sha256="${CONTRACT_SHA256}"
+COPY --from=build /out/shinto-io-governor /shinto-io-governor
+COPY contract/runtime.json /shinto-io-qos-runtime-contract.json
+COPY cmd/shinto-io-governor/rootfs/host-cgroup/kubepods/io.max /host-cgroup/kubepods/io.max
+COPY cmd/shinto-io-governor/rootfs/host-cgroup/kubepods/io.stat /host-cgroup/kubepods/io.stat
+COPY cmd/shinto-io-governor/rootfs/host-cgroup/podruntime/etcd/io.latency /host-cgroup/podruntime/etcd/io.latency
+COPY cmd/shinto-io-governor/rootfs/host-cgroup/podruntime/etcd/io.stat /host-cgroup/podruntime/etcd/io.stat
+COPY cmd/shinto-io-governor/rootfs/var/run/shinto-io-governor.prom /var/run/shinto-io-governor.prom
+USER 0:0
+ENTRYPOINT ["/shinto-io-governor"]

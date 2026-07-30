@@ -1,0 +1,91 @@
+name: Release Shinto I/O QoS
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: shinto-io-qos-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    outputs:
+      digest: ${{ steps.publish.outputs.digest }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Validate committed source
+        run: |
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          python3 scripts/check-publication_test.py
+          python3 scripts/verify-published-image_test.py
+          python3 scripts/check-publication.py
+
+      - name: Check Docker tools
+        run: |
+          docker version
+          buildx_version="$(docker buildx version | sed -n 's/.* v\([0-9][0-9.]*\).*/\1/p')"
+          test -n "${buildx_version}"
+          test "$(printf '%s\n' 0.10.0 "${buildx_version}" | sort -V | head -1)" = 0.10.0
+
+      - name: Create isolated builder
+        run: |
+          builder="shinto-io-qos-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "BUILDER=${builder}" >> "${GITHUB_ENV}"
+          docker buildx create --name "${builder}" --driver docker-container \
+            --driver-opt image=docker.io/moby/buildkit@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec \
+            --use --bootstrap
+
+      - name: Log in to GHCR
+        run: echo "${{ github.token }}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+
+      - name: Publish immutable image
+        id: publish
+        run: |
+          contract_sha="$(sha256sum contract/runtime.json | awk '{print $1}')"
+          metadata="${RUNNER_TEMP}/shinto-io-qos-metadata.json"
+          docker buildx build --builder "${BUILDER}" --platform linux/amd64 \
+            --file cmd/shinto-io-governor/Dockerfile.release \
+            --build-arg "SOURCE_REVISION=${GITHUB_SHA}" \
+            --build-arg "CONTRACT_SHA256=${contract_sha}" \
+            --attest type=provenance,mode=max \
+            --attest type=sbom,generator=docker.io/docker/buildkit-syft-scanner@sha256:79e7b013cbec16bbb436f312819a49a4a57752b2270c1a9332ae1a10fcc82a68 \
+            --metadata-file "${metadata}" --push \
+            --tag "ghcr.io/shintosh/shinto-io-qos:${GITHUB_SHA}" .
+          digest="$(jq -r '."containerimage.digest"' "${metadata}")"
+          test "${digest#sha256:}" != "${digest}"
+          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+          echo "Published ghcr.io/shintosh/shinto-io-qos@${digest}" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Verify published image
+        run: |
+          digest="${{ steps.publish.outputs.digest }}"
+          image="ghcr.io/shintosh/shinto-io-qos@${digest}"
+          docker buildx imagetools inspect "${image}" --format '{{json .Provenance}}' > "${RUNNER_TEMP}/provenance.json"
+          docker buildx imagetools inspect "${image}" --format '{{json .SBOM}}' > "${RUNNER_TEMP}/sbom.json"
+          docker buildx imagetools inspect "${image}" --format '{{json .Image}}' > "${RUNNER_TEMP}/image.json"
+          docker pull "${image}"
+          container="$(docker create "${image}")"
+          docker cp "${container}:/shinto-io-qos-runtime-contract.json" "${RUNNER_TEMP}/runtime.json"
+          docker rm "${container}"
+          python3 scripts/verify-published-image.py \
+            --digest "${digest}" --source-revision "${GITHUB_SHA}" \
+            --contract contract/runtime.json --embedded-contract "${RUNNER_TEMP}/runtime.json" \
+            --provenance "${RUNNER_TEMP}/provenance.json" --sbom "${RUNNER_TEMP}/sbom.json" \
+            --image "${RUNNER_TEMP}/image.json"
+
+      - name: Remove isolated builder
+        if: always()
+        run: |
+          if test -n "${BUILDER:-}"; then
+            docker buildx rm "${BUILDER}"
+          fi
