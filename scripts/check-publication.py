@@ -172,7 +172,8 @@ def check_workflow(root: Path) -> None:
     require(len(re.findall(r"(?m)^\s*permissions:\s*$", workflow)) == 1, "workflow permissions must have one owner")
     permission_match = re.search(r"(?ms)^permissions:\n((?:  [^\n]+\n)+)", workflow)
     require(permission_match is not None and permission_match.group(1).splitlines() == ["  contents: read", "  packages: write"], "workflow permissions differ")
-    require(workflow.count("${{ github.token }}") == 1, "workflow token use differs")
+    token_login = 'run: echo "${{ github.token }}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin'
+    require(workflow.count("${{ github.token }}") == 1 and workflow.count(token_login) == 1, "workflow token use differs")
     require(re.search(r"\$\{\{\s*secrets\.", workflow, re.IGNORECASE) is None, "extra workflow secrets are forbidden")
     require("docker login ghcr.io" in workflow, "workflow token must be limited to GHCR login")
     require("repository:" not in workflow, "workflow cannot check out another repository")
@@ -187,6 +188,7 @@ def check_workflow(root: Path) -> None:
         "ghcr.io/shintosh/shinto-io-qos@${digest}",
     }
     require(registry_references <= allowed_registry_references, "workflow contains an unapproved registry image")
+    require(workflow.count("docker pull ") == 2 and workflow.count("docker create ") == 2 and "docker run " not in workflow, "workflow image command inventory differs")
 
 
 def check_private_markers(root: Path) -> None:

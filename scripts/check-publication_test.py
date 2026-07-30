@@ -171,6 +171,21 @@ class PublicationContractTest(unittest.TestCase):
         result = self.run_checker()
         self.assertIn("extra workflow secrets", result.stderr)
 
+    def test_rejects_token_outside_exact_login(self) -> None:
+        self.mutate(
+            ".github/workflows/release.yml",
+            'run: echo "${{ github.token }}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin',
+            'env:\n          PACKAGE_TOKEN: ${{ github.token }}\n        run: echo "${PACKAGE_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin',
+        )
+        result = self.run_checker()
+        self.assertIn("workflow token use differs", result.stderr)
+
+    def test_rejects_docker_shorthand_image(self) -> None:
+        target = self.fixture / ".github/workflows/release.yml"
+        target.write_text(target.read_text() + "\n# docker pull alpine:latest\n")
+        result = self.run_checker()
+        self.assertIn("workflow image command inventory differs", result.stderr)
+
     def test_rejects_additional_mutable_image(self) -> None:
         target = self.fixture / ".github/workflows/release.yml"
         target.write_text(target.read_text() + "\n# docker pull docker.io/library/alpine:latest\n")

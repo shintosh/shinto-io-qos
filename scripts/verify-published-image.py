@@ -98,7 +98,11 @@ def verify(args: argparse.Namespace) -> None:
     require(labels.get("io.shintosh.shinto-io-qos.contract-sha256") == contract_hash, "contract label differs")
     require(labels.get("io.shintosh.shinto-io-qos.base") == "scratch", "scratch result differs")
     documents = (("provenance", provenance), ("sbom", sbom), ("image", image))
-    for forbidden in ("github.com/xojigsx", "ghcr.io/xojigsx", "authorization", "password", "private key"):
+    for forbidden in (
+        "github.com/xojigsx", "ghcr.io/xojigsx", "authorization", "bearer",
+        "password", "private key", "token", "secret", "ghp_", "github_pat_",
+        "aws_access_key_id", "postgres_dsn", "connection string",
+    ):
         paths = [path for name, document in documents for path in marker_paths(document, forbidden, name)]
         require(not paths, f"published metadata contains forbidden marker: {forbidden} at {', '.join(paths[:5])}")
 

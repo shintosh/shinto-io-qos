@@ -108,6 +108,17 @@ class PublishedImageVerifierTest(unittest.TestCase):
         self.assertIn("forbidden marker", result.stderr)
         self.assertIn("provenance.private", result.stderr)
 
+    def test_rejects_token_field(self) -> None:
+        self.sbom["SPDX"]["repositoryToken"] = "credential-value"
+        result = self.run_verifier()
+        self.assertIn("forbidden marker: token", result.stderr)
+        self.assertIn("sbom.SPDX.repositoryToken", result.stderr)
+
+    def test_rejects_bearer_value(self) -> None:
+        self.provenance["SLSA"]["credential"] = "Bearer credential-value"
+        result = self.run_verifier()
+        self.assertIn("forbidden marker: bearer", result.stderr)
+
     def test_rejects_manifest_digest_mismatch(self) -> None:
         self.digest = "sha256:" + "2" * 64
         result = self.run_verifier()
