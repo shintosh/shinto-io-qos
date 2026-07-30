@@ -85,6 +85,7 @@ class PublishedImageVerifierTest(unittest.TestCase):
         self.provenance["private"] = "github.com/xojigsx/shinto"
         result = self.run_verifier()
         self.assertIn("forbidden marker", result.stderr)
+        self.assertIn("provenance.private", result.stderr)
 
 
 if __name__ == "__main__":

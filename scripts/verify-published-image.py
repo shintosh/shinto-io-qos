@@ -32,6 +32,22 @@ def flattened(value: object) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
+def marker_paths(value: object, marker: str, path: str) -> list[str]:
+    matches: list[str] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_path = f"{path}.{key}"
+            if marker in str(key).lower():
+                matches.append(child_path)
+            matches.extend(marker_paths(child, marker, child_path))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            matches.extend(marker_paths(child, marker, f"{path}[{index}]"))
+    elif marker in str(value).lower():
+        matches.append(path)
+    return matches
+
+
 def verify(args: argparse.Namespace) -> None:
     require(re.fullmatch(r"sha256:[0-9a-f]{64}", args.digest) is not None, "image digest is not exact")
     require(re.fullmatch(r"[0-9a-f]{40}", args.source_revision) is not None, "source revision is not exact")
@@ -55,8 +71,10 @@ def verify(args: argparse.Namespace) -> None:
     require(SOURCE in image_text, "OCI source label differs")
     require(args.source_revision in image_text, "OCI revision label differs")
     require(contract_hash in image_text, "contract label differs")
+    documents = (("provenance", provenance), ("sbom", sbom), ("image", image))
     for forbidden in ("github.com/xojigsx", "ghcr.io/xojigsx", "authorization", "password", "private key"):
-        require(forbidden not in (provenance_text + sbom_text + image_text).lower(), f"published metadata contains forbidden marker: {forbidden}")
+        paths = [path for name, document in documents for path in marker_paths(document, forbidden, name)]
+        require(not paths, f"published metadata contains forbidden marker: {forbidden} at {', '.join(paths[:5])}")
 
 
 def main() -> int:
