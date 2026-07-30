@@ -96,6 +96,15 @@ class PublicationContractTest(unittest.TestCase):
         result = self.run_checker()
         self.assertIn("workflow lacks required contract", result.stderr)
 
+    def test_rejects_missing_pinned_validation_toolchain(self) -> None:
+        self.mutate(
+            ".github/workflows/release.yml",
+            "1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651",
+            "0" * 64,
+        )
+        result = self.run_checker()
+        self.assertIn("workflow lacks pinned validation toolchain", result.stderr)
+
     def test_rejects_unapproved_action(self) -> None:
         target = self.fixture / ".github/workflows/release.yml"
         target.write_text(target.read_text() + "\n      - uses: vendor/action@1111111111111111111111111111111111111111\n")

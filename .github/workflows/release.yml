@@ -23,6 +23,18 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
+      - name: Provision pinned Go validation toolchain
+        run: |
+          builder_image="docker.io/library/golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651"
+          docker pull "${builder_image}"
+          validation_container="$(docker create "${builder_image}")"
+          mkdir "${RUNNER_TEMP}/go"
+          docker cp "${validation_container}:/usr/local/go/." "${RUNNER_TEMP}/go"
+          docker rm "${validation_container}"
+          "${RUNNER_TEMP}/go/bin/go" version | grep 'go1.26.5 '
+          echo "GOROOT=${RUNNER_TEMP}/go" >> "${GITHUB_ENV}"
+          echo "${RUNNER_TEMP}/go/bin" >> "${GITHUB_PATH}"
+
       - name: Validate committed source
         run: |
           test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"

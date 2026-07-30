@@ -142,6 +142,18 @@ def check_workflow(root: Path) -> None:
         "ghcr.io/shintosh/shinto-io-qos:${GITHUB_SHA}",
     ):
         require(required in workflow, f"workflow lacks required contract: {required}")
+    validation_contract = (
+        "Provision pinned Go validation toolchain",
+        f'builder_image="{PINNED_BUILDER}"',
+        'docker pull "${builder_image}"',
+        'docker create "${builder_image}"',
+        'docker cp "${validation_container}:/usr/local/go/." "${RUNNER_TEMP}/go"',
+        '"${RUNNER_TEMP}/go/bin/go" version',
+        'echo "GOROOT=${RUNNER_TEMP}/go" >> "${GITHUB_ENV}"',
+        'echo "${RUNNER_TEMP}/go/bin" >> "${GITHUB_PATH}"',
+    )
+    require(all(fragment in workflow for fragment in validation_contract), "workflow lacks pinned validation toolchain")
+    require(workflow.index("Provision pinned Go validation toolchain") < workflow.index("Validate committed source"), "validation toolchain must precede source checks")
     for forbidden in ("self-hosted", "arc-runner", "pull_request", "push:", "schedule:", "curl ", "wget ", "gh ", "apt-get", "apk ", "yum ", "dnf ", "brew ", "kubectl", "talosctl", "ssh ", "release-all", "promote-stable", "--cache-to", "--cache-from", "--allow-insecure-entitlement", "--network=host", "--secret", "--ssh"):
         require(forbidden not in workflow, f"workflow contains forbidden contract: {forbidden}")
     for use in re.findall(r"(?m)^\s*- uses:\s*(\S+)", workflow):
