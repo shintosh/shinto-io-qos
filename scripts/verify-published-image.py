@@ -127,6 +127,9 @@ def verify(args: argparse.Namespace) -> None:
         "aws_access_key_id", "postgres_dsn", "connection string",
     ):
         paths = [path for name, document in documents for path in marker_paths(document, forbidden, name)]
+        if forbidden == "github.com/xojigsx":
+            actor_prefix = "provenance.SLSA.buildDefinition.internalParameters.github_event_payload.sender."
+            paths = [path for path in paths if not path.startswith(actor_prefix)]
         require(not paths, f"published metadata contains forbidden marker: {forbidden} at {', '.join(paths[:5])}")
 
 

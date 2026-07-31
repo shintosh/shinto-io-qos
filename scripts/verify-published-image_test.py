@@ -48,6 +48,9 @@ class PublishedImageVerifierTest(unittest.TestCase):
                 "internalParameters": {
                     "builderPlatform": "linux/amd64",
                     "buildConfig": {"llbDefinition": [{"id": "step0", "op": {"digest": "fixture"}}]},
+                    "github_event_payload": {
+                        "sender": {"login": "xojigsx", "html_url": "https://github.com/xojigsx"},
+                    },
                 },
                 "resolvedDependencies": [{
                     "uri": "pkg:docker/golang",
