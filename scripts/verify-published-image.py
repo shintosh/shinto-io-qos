@@ -83,7 +83,12 @@ def verify(args: argparse.Namespace) -> None:
     image_text = flattened(image)
     require(len(provenance_text) > 100, "maximum provenance is empty")
     completeness = provenance_payload.get("metadata", {}).get("completeness", {})
-    require(completeness == {"parameters": True, "environment": True, "materials": True}, "maximum provenance completeness differs")
+    expected_completeness = {"parameters": True, "environment": True, "materials": True}
+    observed_completeness = {
+        key: completeness.get(key) if isinstance(completeness, dict) and isinstance(completeness.get(key), bool) else "non-boolean"
+        for key in expected_completeness
+    }
+    require(completeness == expected_completeness, f"maximum provenance completeness differs; observed completeness={flattened(observed_completeness)}")
     config_source = provenance_payload.get("invocation", {}).get("configSource", {})
     require(config_source.get("uri") == SOURCE, "provenance source differs")
     require(config_source.get("digest", {}).get("sha1") == args.source_revision, "provenance revision differs")

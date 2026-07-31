@@ -97,6 +97,18 @@ class PublishedImageVerifierTest(unittest.TestCase):
         result = self.run_verifier()
         self.assertIn("provenance revision differs", result.stderr)
 
+    def test_reports_bounded_observed_completeness(self) -> None:
+        self.provenance["SLSA"]["metadata"]["completeness"] = {
+            "parameters": True,
+            "environment": False,
+            "materials": False,
+        }
+        result = self.run_verifier()
+        self.assertIn(
+            'observed completeness={"environment":false,"materials":false,"parameters":true}',
+            result.stderr,
+        )
+
     def test_rejects_missing_sbom(self) -> None:
         self.sbom = {"SPDX": {}}
         result = self.run_verifier()
