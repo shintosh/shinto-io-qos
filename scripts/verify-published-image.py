@@ -37,7 +37,7 @@ def marker_paths(value: object, marker: str, path: str) -> list[str]:
     if isinstance(value, dict):
         for key, child in value.items():
             child_path = f"{path}.{key}"
-            if marker in str(key).lower():
+            if marker in str(key).lower() and child not in (None, "", [], {}):
                 matches.append(child_path)
             matches.extend(marker_paths(child, marker, child_path))
     elif isinstance(value, list):
@@ -46,6 +46,17 @@ def marker_paths(value: object, marker: str, path: str) -> list[str]:
     elif marker in str(value).lower():
         matches.append(path)
     return matches
+
+
+def contains_sha256(value: object, digest: str) -> bool:
+    digest_hex = digest.removeprefix("sha256:")
+    if isinstance(value, dict):
+        if value.get("sha256") == digest_hex:
+            return True
+        return any(contains_sha256(child, digest) for child in value.values())
+    if isinstance(value, list):
+        return any(contains_sha256(child, digest) for child in value)
+    return value == digest
 
 
 def platform_manifest_digest(manifest: object) -> str:
@@ -82,19 +93,26 @@ def verify(args: argparse.Namespace) -> None:
     sbom_text = flattened(sbom_payload)
     image_text = flattened(image)
     require(len(provenance_text) > 100, "maximum provenance is empty")
-    completeness = provenance_payload.get("metadata", {}).get("completeness", {})
-    expected_completeness = {"parameters": True, "environment": True, "materials": True}
+    build_definition = provenance_payload.get("buildDefinition", {})
+    run_metadata = provenance_payload.get("runDetails", {}).get("metadata", {})
+    completeness = run_metadata.get("buildkit_completeness", {})
+    expected_completeness = {"request": True, "resolvedDependencies": False}
     observed_completeness = {
         key: completeness.get(key) if isinstance(completeness, dict) and isinstance(completeness.get(key), bool) else "non-boolean"
         for key in expected_completeness
     }
     require(completeness == expected_completeness, f"maximum provenance completeness differs; observed completeness={flattened(observed_completeness)}")
-    config_source = provenance_payload.get("invocation", {}).get("configSource", {})
-    require(config_source.get("uri") == SOURCE, "provenance source differs")
-    require(config_source.get("digest", {}).get("sha1") == args.source_revision, "provenance revision differs")
-    require(BUILDER_DIGEST in provenance_text, "provenance lacks pinned Go builder")
+    require(build_definition.get("buildType") == "https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md", "provenance build type differs")
+    build_config = build_definition.get("internalParameters", {}).get("buildConfig", {})
+    require(isinstance(build_config.get("llbDefinition"), list) and len(build_config["llbDefinition"]) > 0, "maximum provenance lacks build definition")
+    buildkit_metadata = run_metadata.get("buildkit_metadata", {})
+    require(isinstance(buildkit_metadata.get("source"), dict) and buildkit_metadata["source"], "maximum provenance lacks source mapping")
+    vcs = buildkit_metadata.get("vcs", {})
+    require(vcs.get("source") == SOURCE, "provenance source differs")
+    require(vcs.get("revision") == args.source_revision, "provenance revision differs")
+    require(contains_sha256(provenance_payload, BUILDER_DIGEST), "provenance lacks pinned Go builder")
     require(len(sbom_text) > 100 and re.fullmatch(r"SPDX-[0-9.]+", str(sbom_payload.get("spdxVersion"))) is not None, "SPDX SBOM is empty")
-    require(SBOM_DIGEST in provenance_text or SBOM_DIGEST in sbom_text, "attestations lack pinned SBOM generator")
+    require(contains_sha256(provenance_payload, SBOM_DIGEST) or contains_sha256(sbom_payload, SBOM_DIGEST), "attestations lack pinned SBOM generator")
     require(isinstance(image, dict) and image.get("os") == "linux", "image OS differs")
     require(image.get("architecture") == "amd64", "image architecture differs")
     labels = image.get("config", {}).get("Labels", {})

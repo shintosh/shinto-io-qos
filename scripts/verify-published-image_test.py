@@ -39,18 +39,36 @@ class PublishedImageVerifierTest(unittest.TestCase):
         self.digest = "sha256:" + hashlib.sha256((self.root / "manifest.json").read_bytes()).hexdigest()
         contract_hash = hashlib.sha256(contract).hexdigest()
         self.provenance = {"SLSA": {
-            "buildType": "https://mobyproject.org/buildkit@v1",
-            "builder": {"id": "https://github.com/docker/build-push-action"},
-            "invocation": {"configSource": {
-                "uri": "https://github.com/shintosh/shinto-io-qos",
-                "digest": {"sha1": REVISION},
-                "entryPoint": "build/package/Dockerfile",
-            }},
-            "materials": [
-                "sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651",
-                "sha256:79e7b013cbec16bbb436f312819a49a4a57752b2270c1a9332ae1a10fcc82a68",
-            ],
-            "metadata": {"buildInvocationId": "fixture", "completeness": {"parameters": True, "environment": True, "materials": True}},
+            "buildDefinition": {
+                "buildType": "https://github.com/moby/buildkit/blob/master/docs/attestations/slsa-definitions.md",
+                "externalParameters": {
+                    "configSource": {"path": "cmd/shinto-io-governor/Dockerfile.release"},
+                    "request": {"frontend": "dockerfile.v0", "args": {}, "locals": [{"name": "context"}], "secrets": [], "ssh": []},
+                },
+                "internalParameters": {
+                    "builderPlatform": "linux/amd64",
+                    "buildConfig": {"llbDefinition": [{"id": "step0", "op": {"digest": "fixture"}}]},
+                },
+                "resolvedDependencies": [{
+                    "uri": "pkg:docker/golang",
+                    "digest": {"sha256": "1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651"},
+                }, {
+                    "uri": "pkg:docker/buildkit-syft-scanner",
+                    "digest": {"sha256": "79e7b013cbec16bbb436f312819a49a4a57752b2270c1a9332ae1a10fcc82a68"},
+                }],
+            },
+            "runDetails": {
+                "builder": {"id": "https://github.com/docker/build-push-action"},
+                "metadata": {
+                    "invocationID": "fixture",
+                    "buildkit_completeness": {"request": True, "resolvedDependencies": False},
+                    "buildkit_metadata": {
+                        "vcs": {"source": "https://github.com/shintosh/shinto-io-qos", "revision": REVISION},
+                        "source": {"locations": {"step0": {}}},
+                        "layers": {"step0": []},
+                    },
+                },
+            },
         }}
         self.sbom = {"SPDX": {
             "spdxVersion": "SPDX-2.3",
@@ -93,19 +111,18 @@ class PublishedImageVerifierTest(unittest.TestCase):
         self.assertIn("embedded runtime contract differs", result.stderr)
 
     def test_rejects_wrong_revision(self) -> None:
-        self.provenance["SLSA"]["invocation"]["configSource"]["digest"]["sha1"] = "3" * 40
+        self.provenance["SLSA"]["runDetails"]["metadata"]["buildkit_metadata"]["vcs"]["revision"] = "3" * 40
         result = self.run_verifier()
         self.assertIn("provenance revision differs", result.stderr)
 
     def test_reports_bounded_observed_completeness(self) -> None:
-        self.provenance["SLSA"]["metadata"]["completeness"] = {
-            "parameters": True,
-            "environment": False,
-            "materials": False,
+        self.provenance["SLSA"]["runDetails"]["metadata"]["buildkit_completeness"] = {
+            "request": False,
+            "resolvedDependencies": True,
         }
         result = self.run_verifier()
         self.assertIn(
-            'observed completeness={"environment":false,"materials":false,"parameters":true}',
+            'observed completeness={"request":false,"resolvedDependencies":true}',
             result.stderr,
         )
 
@@ -145,7 +162,7 @@ class PublishedImageVerifierTest(unittest.TestCase):
         self.assertIn("manifest lacks one attestation manifest", result.stderr)
 
     def test_rejects_nested_provenance_identity_decoy(self) -> None:
-        self.provenance["SLSA"]["invocation"]["configSource"]["uri"] = "https://example.invalid/repo"
+        self.provenance["SLSA"]["runDetails"]["metadata"]["buildkit_metadata"]["vcs"]["source"] = "https://example.invalid/repo"
         self.provenance["decoy"] = "https://github.com/shintosh/shinto-io-qos"
         result = self.run_verifier()
         self.assertIn("provenance source differs", result.stderr)
